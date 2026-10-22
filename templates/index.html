@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>ВЫГРУЖАТОР</title>
+  <link rel="stylesheet" href="/static/element-plus.css" />
+  <script src="/static/vue.global.prod.js"></script>
+  <script src="/static/element-plus.global.js"></script>
+  <script src="/static/echarts.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">ВЫГРУЖАТОР</div>
+      <div class="user" v-if="username">
+        👤 [[ username ]]
+        <button class="btn-link" @click="logout">Выйти</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav class="sidebar">
+        <div class="nav-item" :class="{active: tab==='query'}" @click="tab='query'">📝 Запрос</div>
+        <div class="nav-item" :class="{active: tab==='saved'}" @click="tab='saved'; loadQueries()">💾 Сохранённые</div>
+        <div class="nav-item" :class="{active: tab==='profiles'}" @click="tab='profiles'; loadProfiles()">📚 Профили</div>
+        <div class="nav-item" :class="{active: tab==='datasources'}" @click="tab='datasources'; loadDatasources()">🔌 Источники</div>
+        <div class="nav-item" :class="{active: tab==='history'}" @click="tab='history'; loadHistory()">📜 История</div>
+      </nav>
+
+      <main class="content">
+
+        <section v-if="tab==='query'">
+          <h2>Конструктор запроса</h2>
+          <div class="form-grid">
+            <div class="field">
+              <label>Источник данных</label>
+              <select v-model="q.datasource_id">
+                <option v-for="ds in datasources" :value="ds.id">[[ ds.name ]] ([[ ds.url ]])</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Имя (для сохранения)</label>
+              <input v-model="q.name" placeholder="например: CPU COTE" />
+            </div>
+            <div class="field full" style="position: relative;">
+              <label>PromQL</label>
+              <textarea 
+                v-model="q.promql" 
+                rows="3" 
+                style="width: 100%; box-sizing: border-box;" 
+                placeholder='avg_over_time(...)'
+                @input="onPromqlInput"
+              ></textarea>
+              
+              <div v-if="suggestions.length" class="autocomplete-dropdown" style="position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 4px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                <div 
+                  v-for="s in suggestions" 
+                  :key="s"
+                  @click="selectSuggestion(s)"
+                  style="padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0;"
+                  @mouseenter="$event.target.style.background='#f5f5f5'"
+                  @mouseleave="$event.target.style.background='white'"
+                >
+                  [[ s ]]
+                </div>
+              </div>
+            </div>
+            <div class="field full">
+              <label>Описание (необязательно)</label>
+              <textarea v-model="q.description" rows="2" placeholder="Например: проверка CPU для Grafana, не более 80%"></textarea>
+            </div>
+            <div class="field">
+              <label>Начало</label>
+              <input type="datetime-local" v-model="q.start_time" />
+            </div>
+            <div class="field">
+              <label>Конец</label>
+              <input type="datetime-local" v-model="q.end_time" />
+            </div>
+            <div class="field">
+              <label>Шаг (step)</label>
+              <input v-model="q.step" placeholder="60s" />
+            </div>
+            <div class="field">
+              <label>Min (≥)</label>
+              <input type="text" inputmode="decimal" v-model="q.condition_min" placeholder="например: 0.6" />
+            </div>
+            <div class="field">
+              <label>Max (≤)</label>
+              <input type="text" inputmode="decimal" v-model="q.condition_max" placeholder="например: 0.8" />
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn primary" @click="runQuery" :disabled="loading">▶ Выполнить</button>
+            <button class="btn secondary" @click="saveQuery" :disabled="!q.name"> Сохранить</button>
+          </div>
+
+          <div v-if="result" class="result-box" :class="result.status">
+            <div class="result-head">
+              <span class="badge" :class="result.status">
+                [[ result.status === 'success' ? '✅ Критерии соблюдены' : result.status === 'failed' ? '️ Обнаружено нарушение критериев' : '❌ Ошибка выполнения' ]]
+              </span>
+              <span v-if="result.total_points !== undefined">Всего точек данных: [[ result.total_points ]]</span>
+            </div>
+            <div v-if="result.message" class="err-msg">[[ result.message ]]</div>
+            <div id="chart" class="chart"></div>
+            <div v-if="result.violations && result.violations.length" class="violations">
+              <div class="violation-summary">
+                ⚠️ За промежуток времени с 
+                <strong>[[ formatDate(result.violations[0].timestamp) ]]</strong> 
+                по 
+                <strong>[[ formatDate(result.violations[result.violations.length - 1].timestamp) ]]</strong> 
+                есть нарушение критериев.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="tab==='saved'">
+          <h2>Сохранённые запросы</h2>
+          <div v-if="!queries.length" class="empty">Пока пусто. Сохраните запрос из вкладки "Запрос".</div>
+          <div class="card-list">
+            <div class="card-item" v-for="q in queries">
+              <div class="card-head">
+                <strong>[[ q.name ]]</strong>
+                <button class="btn-link danger" @click="deleteQuery(q.id)">🗑</button>
+              </div>
+              <div v-if="q.description" class="card-meta" style="font-style: italic;">📝 [[ q.description ]]</div>
+              <div class="card-meta">DS: [[ dsName(q.datasource_id) ]] · step: [[ q.step ]]</div>
+              <div class="card-meta">Условие: [[ q.condition_min ?? '—' ]] ≤ x ≤ [[ q.condition_max ?? '—' ]]</div>
+              <pre class="promql">[[ q.promql ]]</pre>
+              <button class="btn small" @click="loadQueryToEditor(q)">✏️ В редактор</button>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="tab==='profiles'">
+          <h2>Профили проверок</h2>
+          <div class="form-grid">
+            <div class="field">
+              <label>Новый профиль</label>
+              <input v-model="newProfile.name" placeholder="Название профиля" />
+            </div>
+            <div class="field full">
+              <label>Добавить запросы в профиль</label>
+              <div class="checkboxes">
+                <label v-for="q in queries">
+                  <input type="checkbox" :value="q.id" v-model="newProfile.query_ids" />
+                  [[ q.name ]]
+                </label>
+              </div>
+            </div>
+          </div>
+          <div style="margin: 16px 0; display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="is_public" v-model="newProfile.is_public" style="width: 18px; height: 18px; cursor: pointer;" />
+            <label for="is_public" style="cursor: pointer; font-weight: 500;">
+              Сделать публичным (виден всем пользователям)
+            </label>
+          </div>
+          <button class="btn primary" @click="createProfile" :disabled="!newProfile.name"> Создать профиль</button>
+          <hr />
+          <div v-if="!profiles.length" class="empty">Профилей пока нет.</div>
+          <div class="card-list">
+            <div class="card-item" v-for="p in profiles">
+              <div class="card-head">
+                <strong>📚 [[ p.name ]] 
+                  <span v-if="p.is_public" style="font-size: 0.8em; background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; margin-left: 8px;">Публичный</span>
+                </strong>
+                <span>
+                  <button v-if="p.is_public && p.user_id !== currentUser" class="btn-link" @click="copyProfile(p.id)" style="margin-right: 8px;"> Добавить себе</button>
+                  <button class="btn-link danger" @click="deleteProfile(p.id)">🗑</button>
+                </span>
+              </div>
+              <div class="card-meta" style="color: #666;"> Автор: [[ p.creator_username || 'Неизвестно' ]]</div>
+              <div class="card-meta">Запросов: [[ p.queries.length ]]</div>
+              <ul class="mini-list">
+                <li v-for="q in p.queries">[[ q.name ]]</li>
+              </ul>
+              <div class="form-grid small">
+                <div class="field"><label>Начало</label><input type="datetime-local" v-model="profileRun.start" /></div>
+                <div class="field"><label>Конец</label><input type="datetime-local" v-model="profileRun.end" /></div>
+              </div>
+              <button class="btn primary" @click="runProfile(p.id)" :disabled="loading">▶ Запустить профиль</button>
+            </div>
+          </div>
+
+          <div v-if="profileResult" class="result-box" :class="profileResult.failed_count ? 'failed' : 'success'">
+            <h3>Результат профиля «[[ profileResult.profile_name ]]»</h3>
+            <div style="margin-bottom: 16px;">
+              <strong>Всего:</strong> [[ profileResult.total_queries ]] · 
+              <span style="color: #67c23a;">✅ Успешных: [[ profileResult.success_count ]]</span> · 
+              <span style="color: #f56c6c;">⚠️ Провалов: [[ profileResult.failed_count ]]</span>
+            </div>
+
+            <div v-if="profileResult.success_details && profileResult.success_details.length" style="margin-top: 20px;">
+              <h4 style="color: #67c23a;">✅ Успешные запросы</h4>
+              <div class="card-item" v-for="s in profileResult.success_details" style="margin-bottom: 12px; border-left: 4px solid #67c23a;">
+                <div class="card-head">
+                  <strong>[[ s.query_name ]]</strong>
+                  <span style="background: #f0f9eb; color: #67c23a; padding: 2px 8px; border-radius: 4px; font-size: 0.85em;">
+                    ✅ Критерии соблюдены ([[ s.total_points ]] точек)
+                  </span>
+                </div>
+                <div v-if="s.description" class="card-meta" style="font-style: italic;">📝 [[ s.description ]]</div>
+                <div class="card-meta">Условие: [[ s.condition_min ?? '—' ]] ≤ x ≤ [[ s.condition_max ?? '—' ]]</div>
+                <pre class="promql">[[ s.promql ]]</pre>
+                <button class="btn small" @click="replayQuery(s)" style="background: #67c23a; color: white;">▶ Показать на графике</button>
+              </div>
+            </div>
+
+            <div v-if="profileResult.failed_details && profileResult.failed_details.length" style="margin-top: 20px;">
+              <h4 style="color: #f56c6c;">️ Нарушившие SLA запросы</h4>
+              <div class="card-item" v-for="f in profileResult.failed_details" style="margin-bottom: 12px; border-left: 4px solid #f56c6c;">
+                <div class="card-head">
+                  <strong>[[ f.query_name ]]</strong>
+                  <span style="background: #fef0f0; color: #f56c6c; padding: 2px 8px; border-radius: 4px; font-size: 0.85em;">
+                    ️ Нарушений: [[ f.violations_count ]]
+                  </span>
+                </div>
+                <div v-if="f.description" class="card-meta" style="font-style: italic;">📝 [[ f.description ]]</div>
+                <div class="card-meta">Условие: [[ f.condition_min ?? '—' ]] ≤ x ≤ [[ f.condition_max ?? '—' ]]</div>
+                <pre class="promql">[[ f.promql ]]</pre>
+                <div v-if="f.violations && f.violations.length" class="violation-summary" style="margin: 8px 0;">
+                  ⚠️ За промежуток времени с 
+                  <strong>[[ formatDate(f.violations[0].timestamp) ]]</strong> 
+                  по 
+                  <strong>[[ formatDate(f.violations[f.violations.length - 1].timestamp) ]]</strong> 
+                  есть нарушение критериев.
+                </div>
+                <button class="btn small" @click="replayQuery(f)" style="background: #f56c6c; color: white;">▶ Показать на графике</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="tab==='datasources'">
+          <h2>Источники данных</h2>
+          <div class="form-grid">
+            <div class="field"><label>Название</label><input v-model="newDs.name" placeholder="your_name" /></div>
+            <div class="field"><label>URL</label><input v-model="newDs.url" placeholder="http://10.21.12.3:9090" /></div>
+            <div class="field">
+              <label>Тип</label>
+              <select v-model="newDs.ds_type">
+                <option value="prometheus">Prometheus</option>
+                <option value="victoriametrics">VictoriaMetrics</option>
+              </select>
+            </div>
+          </div>
+          <button class="btn primary" @click="addDatasource">➕ Добавить</button>
+          <div class="card-list" style="margin-top:20px">
+            <div class="card-item" v-for="ds in datasources">
+              <div class="card-head">
+                <strong>[[ ds.name ]]</strong>
+                <span>
+                  <button class="btn-link" @click="checkDs(ds.id)">🔎 Проверить</button>
+                  <button class="btn-link danger" @click="deleteDs(ds.id)">🗑</button>
+                </span>
+              </div>
+              <div class="card-meta">[[ ds.url ]] · тип: [[ ds.ds_type ]]</div>
+              <div class="card-meta" style="color: #666;">👤 Добавил: [[ ds.creator_username || 'Неизвестно' ]]</div>
+              <div v-if="ds._check" class="card-meta" :class="ds._check.ok ? 'ok' : 'bad'">
+                [[ ds._check.ok ? '✅ Доступен' : '❌ ' + ds._check.error ]]
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="tab==='history'">
+          <h2>История запусков</h2>
+          <div v-if="!history.length" class="empty">История пуста.</div>
+          <div class="card-list">
+            <div class="card-item" v-for="h in history" :style="{ borderLeft: h.status === 'success' ? '4px solid #67c23a' : '4px solid #f56c6c' }">
+              <div class="card-head">
+                <strong>[[ h.item_type === 'profile' ? '📚 Профиль' : '📝 Запрос' ]]: [[ h.item_name ]]</strong>
+                <span class="badge" :class="h.status">
+                  [[ h.status === 'success' ? '✅ Успешно' : '⚠️ Нарушения' ]]
+                </span>
+              </div>
+              <div class="card-meta"> [[ formatDate(new Date(h.executed_at).getTime() / 1000) ]]</div>
+              <pre v-if="h.promql" class="promql">[[ h.promql ]]</pre>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

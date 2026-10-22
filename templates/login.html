@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <title>Вход — Страница логина</title>
+  <link rel="stylesheet" href="/static/element-plus.css" />
+  <style>
+    body { margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center;
+           background: linear-gradient(135deg, #667eea, #764ba2); font-family: sans-serif; }
+    .card { width: 380px; padding: 32px; background: #fff; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.2); }
+    h2 { margin: 0 0 24px; text-align: center; color: #333; }
+    .row { margin-bottom: 16px; }
+    .row input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+    .btn { width: 100%; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; margin-top: 8px; }
+    .btn-primary { background: #409eff; color: #fff; }
+    .btn-secondary { background: #f0f0f0; color: #333; }
+    .err { color: #f56c6c; font-size: 13px; margin-top: 8px; text-align: center; }
+    .debug { background: #f5f5f5; padding: 8px; margin-top: 12px; border-radius: 4px; font-size: 11px; font-family: monospace; max-height: 150px; overflow-y: auto; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div class="card" id="loginCard">
+    <h2>🔍 ВЫГРУЗАГРУЖАТОР</h2>
+    <div class="row"><input id="username" placeholder="Логин" autocomplete="off" /></div>
+    <div class="row"><input id="password" type="password" placeholder="Пароль" autocomplete="off" /></div>
+    <button type="button" class="btn btn-primary" id="loginBtn">Войти</button>
+    <button type="button" class="btn btn-secondary" id="registerBtn">Зарегистрироваться</button>
+    <div id="err" class="err"></div>
+    <div id="debug" class="debug"></div>
+  </div>
+  
+  <script>
+    function log(msg) {
+      const debug = document.getElementById('debug');
+      const time = new Date().toLocaleTimeString();
+      debug.innerHTML += `[${time}] ${msg}\n`;
+      debug.scrollTop = debug.scrollHeight;
+      console.log(msg);
+    }
+    
+    document.addEventListener('DOMContentLoaded', function() {
+      log('🟢 DOM loaded, attaching handlers');
+      
+      const loginBtn = document.getElementById('loginBtn');
+      const registerBtn = document.getElementById('registerBtn');
+      
+      loginBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        log('🔵 Login button clicked');
+        doAuth('/api/auth/login');
+        return false;
+      });
+      
+      registerBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        log('🟠 Register button clicked');
+        doAuth('/api/auth/register');
+        return false;
+      });
+      
+      const inputs = document.querySelectorAll('input');
+      inputs.forEach(input => {
+        input.addEventListener('keypress', function(e) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            log('️ Enter pressed, preventing submit');
+            return false;
+          }
+        });
+      });
+    });
+    
+    async function doAuth(endpoint) {
+      const u = document.getElementById('username').value;
+      const p = document.getElementById('password').value;
+      const err = document.getElementById('err');
+      err.textContent = '';
+      
+      log(`📡 Sending request to ${endpoint}`);
+      log(`   Username: ${u}`);
+      log(`   Password length: ${p.length}`);
+      
+      try {
+        const r = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: u, password: p })
+        });
+        
+        log(`📥 Response status: ${r.status}`);
+        
+        if (!r.ok) { 
+          const d = await r.json(); 
+          let errorMsg = 'Неизвестная ошибка';
+          if (Array.isArray(d.detail)) {
+            errorMsg = d.detail.map(e => `${e.loc.slice(1).join('.')}: ${e.msg}`).join('; ');
+          } else if (typeof d.detail === 'string') {
+            errorMsg = d.detail;
+          }
+          throw new Error(errorMsg); 
+        }
+        
+        const data = await r.json();
+        const token = data.access_token;
+        const username = data.username;
+        
+        log(`✅ Got token (length: ${token.length})`);
+        log(`   Username: ${username}`);
+        
+        try {
+          localStorage.setItem('token', token);
+          localStorage.setItem('username', username);
+          log('💾 Saved to localStorage');
+        } catch (e) {
+          log(`❌ localStorage error: ${e.message}`);
+        }
+        
+        try {
+          document.cookie = `token=${token}; path=/; max-age=86400`;
+          document.cookie = `username=${username}; path=/; max-age=86400`;
+          log('🍪 Saved to Cookie');
+        } catch (e) {
+          log(`❌ Cookie error: ${e.message}`);
+        }
+        
+        log('🔍 Checking storage...');
+        const checkLs = localStorage.getItem('token');
+        const checkCookie = document.cookie.includes('token=');
+        log(`   localStorage: ${checkLs ? 'OK' : 'NULL'}`);
+        log(`   Cookie: ${checkCookie ? 'OK' : 'NOT FOUND'}`);
+        
+        log(`🚀 Redirecting to / ...`);
+        
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 300);
+        
+      } catch (e) { 
+        log(`❌ Error: ${e.message}`);
+        console.error(e);
+        err.textContent = e.message; 
+      }
+    }
+    
+    log(' Page script loaded');
+  </script>
+</body>
+</html>
