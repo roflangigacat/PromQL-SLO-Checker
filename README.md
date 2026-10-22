@@ -42,8 +42,6 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-> **Корпоративное зеркало PyPI (sberworks):** старая версия starlette 0.46.2 (зависимость fastapi 0.115.12) блокируется зеркалом. Установится более новый fastapi — это нормально, `requirements.txt` уже позволяет версию `>=0.115.12`. Для нового SQLAlchemy нужен драйвер `psycopg[binary]` (уже в `requirements.txt`).
-
 ## 4. Конфигурация (`.env`)
 
 | Переменная | По умолчанию | Описание |
