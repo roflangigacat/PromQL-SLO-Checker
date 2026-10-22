@@ -1,4 +1,4 @@
-# fapi2 — PromQL SLO Checker
+# PromQL SLO Checker
 
 Веб-приложение (FastAPI) для проверки SLO: выполняет PromQL-запросы к Prometheus/VictoriaMetrics за заданный период и находит точки, выходящие за допустимый диапазон значений (`condition_min` / `condition_max`). Результаты группировать можно в **профили** (набор запросов), запуски сохраняются в историю.
 
